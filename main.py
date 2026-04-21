@@ -145,11 +145,14 @@ class ChargeAPI:
             form = {"feeitemid": "411", "type": "select", "level": "0"}
             resp = await client.post(ChargeAPI.QUERY_URL, data=form)
             resp.raise_for_status()
-            data_str = resp.json().get("map", {}).get("data")
-            if not data_str:
+            data_obj = resp.json().get("map", {}).get("data")
+            if data_obj is None:
                 logger.error("level0 响应缺少 map.data")
                 return None
-            campus_list = json.loads(data_str)
+            if isinstance(data_obj, str):
+                campus_list = json.loads(data_obj)
+            else:
+                campus_list = data_obj
             campus = next((item["value"] for item in campus_list if item["name"] == "长安校区"), None)
             if not campus:
                 logger.error("未找到长安校区")
@@ -158,8 +161,11 @@ class ChargeAPI:
             form = {"feeitemid": "411", "type": "select", "level": "1", "campus": campus}
             resp = await client.post(ChargeAPI.QUERY_URL, data=form)
             resp.raise_for_status()
-            data_str = resp.json().get("map", {}).get("data")
-            build_list = json.loads(data_str)
+            data_obj = resp.json().get("map", {}).get("data")
+            if isinstance(data_obj, str):
+                build_list = json.loads(data_obj)
+            else:
+                build_list = data_obj
             build_name = f"{build_id}号楼"
             build = next((item["value"] for item in build_list if item["name"] == build_name), None)
             if not build:
@@ -169,8 +175,11 @@ class ChargeAPI:
             form = {"feeitemid": "411", "type": "select", "level": "2", "campus": campus, "build": build}
             resp = await client.post(ChargeAPI.QUERY_URL, data=form)
             resp.raise_for_status()
-            data_str = resp.json().get("map", {}).get("data")
-            floor_list = json.loads(data_str)
+            data_obj = resp.json().get("map", {}).get("data")
+            if isinstance(data_obj, str):
+                floor_list = json.loads(data_obj)
+            else:
+                floor_list = data_obj
             floor_name = f"{num_to_chinese(floor_id)}层"
             floor = next((item["value"] for item in floor_list if item["name"] == floor_name), None)
             if not floor:
@@ -183,8 +192,11 @@ class ChargeAPI:
             }
             resp = await client.post(ChargeAPI.QUERY_URL, data=form)
             resp.raise_for_status()
-            data_str = resp.json().get("map", {}).get("data")
-            room_list = json.loads(data_str)
+            data_obj = resp.json().get("map", {}).get("data")
+            if isinstance(data_obj, str):
+                room_list = json.loads(data_obj)
+            else:
+                room_list = data_obj
             room_name = f"c{build_room_id}"
             room = next((item["value"] for item in room_list if item["name"] == room_name), None)
             if not room:
