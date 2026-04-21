@@ -226,7 +226,7 @@ class ChargeAPI:
 class ChargePlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
-        self.user_creds: Dict[str, Dict] = {}
+        self.global_cred: Optional[Dict] = None
         self.client = httpx.AsyncClient(timeout=30.0)
 
     async def initialize(self):
@@ -235,32 +235,30 @@ class ChargePlugin(Star):
     async def terminate(self):
         await self.client.aclose()
 
-    async def _re_login(self, user_id: str) -> Optional[str]:
-        cred = self.user_creds.get(user_id)
-        if not cred or not cred.get("username") or not cred.get("password"):
-            logger.warning(f"用户 {user_id} 未设置登录凭据，无法重登")
+    async def _re_login(self) -> Optional[str]:
+        if not self.global_cred or not self.global_cred.get("username") or not self.global_cred.get("password"):
+            logger.warning("未设置登录凭据，无法重登")
             return None
-        token = await ChargeAPI.login(cred["username"], cred["password"], self.client)
+        token = await ChargeAPI.login(self.global_cred["username"], self.global_cred["password"], self.client)
         if token:
-            self.user_creds[user_id]["token"] = token
-            logger.info(f"用户 {user_id} 重登成功")
+            self.global_cred["token"] = token
+            logger.info("重登成功")
             return token
         else:
-            logger.error(f"用户 {user_id} 重登失败")
+            logger.error("重登失败")
             return None
 
-    async def _query_with_retry(self, user_id: str, room_id: str) -> Tuple[Optional[float], str]:
-        cred = self.user_creds.get(user_id)
-        if not cred or not cred.get("token"):
+    async def _query_with_retry(self, room_id: str) -> Tuple[Optional[float], str]:
+        if not self.global_cred or not self.global_cred.get("token"):
             return None, "请先使用 `/c login 账号 密码` 登录"
 
-        token = cred["token"]
+        token = self.global_cred["token"]
         power = await ChargeAPI.query_charge(room_id, token, self.client)
         if power is not None:
             return power, ""
 
-        logger.info(f"用户 {user_id} 查询失败，尝试重新登录")
-        new_token = await self._re_login(user_id)
+        logger.info("查询失败，尝试重新登录")
+        new_token = await self._re_login()
         if not new_token:
             return None, "登录凭据无效或网络错误，请重新使用 `/c login` 设置账号密码"
 
@@ -279,7 +277,6 @@ class ChargePlugin(Star):
             return
 
         sub_cmd = parts[1]
-        user_id = event.get_sender_id()
 
         if sub_cmd == "login":
             if len(parts) < 4:
@@ -289,7 +286,7 @@ class ChargePlugin(Star):
             password = parts[3]
             token = await ChargeAPI.login(username, password, self.client)
             if token:
-                self.user_creds[user_id] = {
+                self.global_cred = {
                     "username": username,
                     "password": password,
                     "token": token
@@ -304,7 +301,7 @@ class ChargePlugin(Star):
             yield event.plain_result("房间号格式错误，应为至少3位数字，例如 12301")
             return
 
-        power, err_msg = await self._query_with_retry(user_id, room_id)
+        power, err_msg = await self._query_with_retry(room_id)
         if power is not None:
             yield event.plain_result(f"房间 {room_id} 当前剩余电量: {power} 度")
         else:
