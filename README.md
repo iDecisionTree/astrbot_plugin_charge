@@ -30,6 +30,25 @@ pip install -r requirements.txt
 - `/c analyze <房间号>`：返回一张图表，上半部分是近七天剩余电量折线图，下半部分是近七天每天消耗电量折线图，并附带文字分析。
 - 如果房间未添加，会直接提示先执行 `analyze add`。
 
+## Linux 中文字体
+
+如果你部署在 Linux 上，图表中文显示不正常，通常是系统缺少中文字体。建议安装其一：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y fonts-noto-cjk
+# 或者
+sudo apt-get install -y fonts-wqy-microhei
+```
+
+如果字体安装在自定义路径，也可以通过环境变量指定：
+
+```bash
+export CHARGE_CHINESE_FONT_PATH=/path/to/your/chinese-font.ttf
+```
+
+插件会优先自动搜索常见的 Noto / 文泉驿 / 思源黑体字体路径。
+
 ## 数据存储
 
 - 账号信息：`data/plugin_data/astrbot_plugin_charge/charge_accounts.json`

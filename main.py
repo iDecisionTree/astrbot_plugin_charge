@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime, timedelta
 import json
+import os
 import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -30,6 +31,57 @@ def _iso_now() -> str:
 
 def _date_key(dt: Optional[datetime] = None) -> str:
     return (dt or datetime.now()).strftime("%Y-%m-%d")
+
+
+def _find_chinese_font_path() -> Optional[str]:
+    env_path = os.environ.get("CHARGE_CHINESE_FONT_PATH", "").strip()
+    if env_path:
+        path = Path(env_path)
+        if path.is_file():
+            return str(path)
+
+    candidate_paths = [
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/truetype/arphic/uming.ttc",
+        "/usr/share/fonts/truetype/arphic/ukai.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "C:\\Windows\\Fonts\\msyh.ttc",
+        "C:\\Windows\\Fonts\\simhei.ttf",
+    ]
+    for font_path in candidate_paths:
+        path = Path(font_path)
+        if path.is_file():
+            return str(path)
+
+    try:
+        from matplotlib import font_manager
+
+        preferred_names = [
+            "Noto Sans CJK SC",
+            "Noto Sans CJK TC",
+            "Noto Sans CJK JP",
+            "Noto Sans SC",
+            "Source Han Sans SC",
+            "Source Han Sans CN",
+            "WenQuanYi Micro Hei",
+            "WenQuanYi Zen Hei",
+            "AR PL UMing CN",
+            "AR PL UKai CN",
+            "SimHei",
+            "Microsoft YaHei",
+        ]
+        for family_name in preferred_names:
+            for font in font_manager.fontManager.ttflist:
+                if font.name == family_name and Path(font.fname).is_file():
+                    return font.fname
+    except Exception:
+        pass
+
+    return None
 
 class ChargeAPI:
     BASE_URL = "https://yktydfw.nwu.edu.cn"
@@ -574,31 +626,47 @@ class ChargePlugin(Star):
         consumption_x = dates
         consumption_y = consumptions
 
+        chinese_font_path = _find_chinese_font_path()
+
         try:
             plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"]
             plt.rcParams["axes.unicode_minus"] = False
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 9), constrained_layout=True)
 
+            font_properties = None
+            if chinese_font_path:
+                from matplotlib.font_manager import FontProperties
+
+                font_properties = FontProperties(fname=chinese_font_path)
+                logger.info(f"分析图使用中文字体: {chinese_font_path}")
+                try:
+                    plt.rcParams["font.family"] = font_properties.get_name()
+                except Exception:
+                    pass
+
             ax1.plot(dates, powers, marker="o", linewidth=2, color="#2F6FED")
-            ax1.set_title(f"房间 {room_id} 近七天剩余电量")
-            ax1.set_ylabel("剩余电量（度）")
+            ax1.set_title(f"房间 {room_id} 近七天剩余电量", fontproperties=font_properties)
+            ax1.set_ylabel("剩余电量（度）", fontproperties=font_properties)
             ax1.grid(True, linestyle="--", alpha=0.35)
 
             if any(value is not None for value in consumption_y):
                 ax2.plot(consumption_x, consumption_y, marker="o", linewidth=2, color="#E67E22")
                 ax2.axhline(0, color="#666666", linewidth=1, linestyle="--", alpha=0.6)
-                ax2.set_title("近七天每天消耗电量")
-                ax2.set_ylabel("消耗电量（度）")
+                ax2.set_title("近七天每天消耗电量", fontproperties=font_properties)
+                ax2.set_ylabel("消耗电量（度）", fontproperties=font_properties)
                 ax2.grid(True, linestyle="--", alpha=0.35)
             else:
-                ax2.text(0.5, 0.5, "暂无足够数据绘制消耗曲线", ha="center", va="center", fontsize=13)
+                ax2.text(0.5, 0.5, "暂无足够数据绘制消耗曲线", ha="center", va="center", fontsize=13, fontproperties=font_properties)
                 ax2.set_axis_off()
 
             for ax in (ax1, ax2):
                 if ax.get_visible():
                     ax.tick_params(axis="x", rotation=30)
+                    if font_properties is not None:
+                        for label in ax.get_xticklabels() + ax.get_yticklabels():
+                            label.set_fontproperties(font_properties)
 
-            fig.suptitle(f"房间 {room_id} 电量分析", fontsize=16)
+            fig.suptitle(f"房间 {room_id} 电量分析", fontsize=16, fontproperties=font_properties)
             chart_path = self.plugin_data_dir / f"analysis_{room_id}.png"
             fig.savefig(chart_path, dpi=200)
             plt.close(fig)
