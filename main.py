@@ -225,7 +225,7 @@ class ChargeAPI:
                 "feeitemid": "411", "type": "IEC", "level": "4",
                 "campus": campus, "build": build, "floor": floor, "room": room
             }
-            resp = await client.post(ChargeAPI.QUERY_URL, data=form)
+            resp = await client.post(ChargeAPI.QUERY_URL, headers=headers, data=form)
             resp.raise_for_status()
             ele_data = resp.json().get("map", {}).get("data", {})
             power = ele_data.get("elelastdataSyl")
