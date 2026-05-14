@@ -623,6 +623,28 @@ class ChargePlugin(Star):
                 self._upsert_room_history(room_id, None, datetime.now(), status="failed", error=err_msg)
                 logger.warning(f"夜间采集失败：{room_id}，{err_msg}")
 
+    async def _collect_all_tracked_rooms(self) -> Tuple[int, int, List[str]]:
+        rooms = list(self.analysis_store.get("rooms", {}).keys())
+        if not rooms:
+            return 0, 0, ["当前没有已添加的分析房间，请先使用 `/c analyze add <房间号>` 添加"]
+
+        success_count = 0
+        failed_count = 0
+        lines = [f"开始立即采集 {len(rooms)} 个房间的电量数据："]
+        for room_id in rooms:
+            power, err_msg = await self._query_with_retry(room_id)
+            if power is not None:
+                self._upsert_room_history(room_id, power, datetime.now(), status="ok")
+                success_count += 1
+                lines.append(f"- {room_id}：{power:.2f} 度")
+            else:
+                self._upsert_room_history(room_id, None, datetime.now(), status="failed", error=err_msg)
+                failed_count += 1
+                lines.append(f"- {room_id}：采集失败（{err_msg}）")
+
+        lines.append(f"采集完成：成功 {success_count} 个，失败 {failed_count} 个")
+        return success_count, failed_count, lines
+
     async def _nightly_loop(self) -> None:
         while True:
             try:
@@ -742,7 +764,7 @@ class ChargePlugin(Star):
         if not self.global_cred or not self.global_cred.get("token"):
             new_token = await self._re_login()
             if not new_token:
-                return None, "请先使用 `/c login 账号 密码` 登录"
+                return None, "请先使用 `/c login <账号> <密码>` 登录"
             self.global_cred["token"] = new_token
 
         token = self.global_cred["token"]
@@ -761,11 +783,23 @@ class ChargePlugin(Star):
         else:
             return None, "查询失败，请检查房间号是否正确或稍后再试"
 
+    def _help_text(self) -> str:
+        return (
+            "用法:\n"
+            "/c login <账号> <密码>        - 保存账号密码并登录\n"
+            "/c help                     - 显示帮助\n"
+            "/c account list              - 查看已保存账号\n"
+            "/c account remove <账号|序号> - 删除已保存账号\n"
+            "/c account clear             - 清空所有已保存账号\n"
+            "/c analyze add <房间号>      - 添加分析房间并开启每日 22:00 采集\n"
+            "/c analyze all               - 立即采集所有已添加房间\n"
+            "/c analyze <房间号>          - 查看近七天分析图表\n"
+            "/c <房间号>                  - 查询电费"
+        )
+
     async def _handle_analyze_command(self, event: AstrMessageEvent, parts: List[str]):
         if len(parts) < 3:
-            yield event.plain_result(
-                "用法:\n/c analyze add <房间号>  - 添加分析房间\n/c analyze <房间号>      - 查看近七天分析图表"
-            )
+            yield event.plain_result("用法:\n/c analyze add <房间号>  - 添加分析房间\n/c analyze all            - 立即采集所有已添加房间\n/c analyze <房间号>      - 查看近七天分析图表")
             return
 
         action = parts[2]
@@ -775,6 +809,11 @@ class ChargePlugin(Star):
                 return
             success, msg = self._track_room(parts[3])
             yield event.plain_result(msg)
+            return
+
+        if action == "all":
+            _, _, lines = await self._collect_all_tracked_rooms()
+            yield event.plain_result("\n".join(lines))
             return
 
         room_id = action
@@ -804,13 +843,13 @@ class ChargePlugin(Star):
         message = event.message_str.strip()
         parts = message.split()
         if len(parts) < 2:
-            yield event.plain_result("用法:\n/c login <账号> <密码>        - 保存账号密码并登录\n/c account list              - 查看已保存账号\n/c account remove <账号|序号> - 删除已保存账号\n/c account clear             - 清空所有已保存账号\n/c analyze add <房间号>      - 添加分析房间并开启每日 22:00 采集\n/c analyze <房间号>          - 查看近七天分析图表\n/c <房间号>                  - 查询电费")
+            yield event.plain_result(self._help_text())
             return
 
         sub_cmd = parts[1]
 
         if sub_cmd == "help":
-            yield event.plain_result("用法:\n/c login <账号> <密码>        - 保存账号密码并登录\n/c account list              - 查看已保存账号\n/c account remove <账号|序号> - 删除已保存账号\n/c account clear             - 清空所有已保存账号\n/c analyze add <房间号>      - 添加分析房间\n/c analyze <房间号>          - 查看近七天分析图表\n/c <房间号>                  - 查询电费")
+            yield event.plain_result(self._help_text())
             return
 
         if sub_cmd == "analyze":

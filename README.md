@@ -18,12 +18,14 @@ pip install -r requirements.txt
 /c account clear
 /c <房间号>
 /c analyze add <房间号>
+/c analyze all
 /c analyze <房间号>
 ```
 
 ## 分析功能说明
 
 - `/c analyze add <房间号>`：添加房间到分析列表。
+- `/c analyze all`：立即采集所有已添加房间的电量数据，并持久化保存。
 - 每天晚上 22:00 自动查询一次该房间的剩余电量，并将日期与数据持久化保存。
 - `/c analyze <房间号>`：返回一张图表，上半部分是近七天剩余电量折线图，下半部分是近七天每天消耗电量折线图，并附带文字分析。
 - 如果房间未添加，会直接提示先执行 `analyze add`。
