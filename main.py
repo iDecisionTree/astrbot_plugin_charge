@@ -3,7 +3,9 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
 import httpx
 import json
-from typing import Dict, Optional, Tuple
+import random
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 def num_to_chinese(num_str: str) -> str:
     mapping = {
@@ -222,35 +224,142 @@ class ChargeAPI:
             if "synjones-auth" in client.headers:
                 del client.headers["synjones-auth"]
 
+
+def _normalize_account(username: str, password: str) -> Dict[str, str]:
+    return {"username": username, "password": password}
+
 @register("charge_query", "YourName", "电费查询插件，支持自动登录重试", "1.0.0")
 class ChargePlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
+        self.accounts_file = Path(__file__).resolve().with_name("charge_accounts.json")
         self.global_cred: Optional[Dict] = None
+        self.saved_accounts: List[Dict[str, str]] = self._load_saved_accounts()
         self.client = httpx.AsyncClient(timeout=30.0)
+
+    def _load_saved_accounts(self) -> List[Dict[str, str]]:
+        if not self.accounts_file.exists():
+            return []
+
+        try:
+            raw = json.loads(self.accounts_file.read_text(encoding="utf-8"))
+            accounts = raw.get("accounts", []) if isinstance(raw, dict) else []
+            result: List[Dict[str, str]] = []
+            for item in accounts:
+                if not isinstance(item, dict):
+                    continue
+                username = str(item.get("username", "")).strip()
+                password = str(item.get("password", ""))
+                if username and password:
+                    result.append({"username": username, "password": password})
+            return result
+        except Exception as e:
+            logger.error(f"加载已保存账号失败: {e}")
+            return []
+
+    def _save_accounts(self) -> None:
+        try:
+            payload = {"accounts": self.saved_accounts}
+            self.accounts_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            logger.error(f"保存账号失败: {e}")
+
+    def _upsert_account(self, username: str, password: str) -> None:
+        username = username.strip()
+        if not username:
+            return
+
+        for account in self.saved_accounts:
+            if account.get("username") == username:
+                account["password"] = password
+                self._save_accounts()
+                return
+
+        self.saved_accounts.append(_normalize_account(username, password))
+        self._save_accounts()
+
+    def _list_accounts(self) -> str:
+        if not self.saved_accounts:
+            return "当前没有已保存的账号"
+
+        lines = ["已保存账号列表："]
+        for index, account in enumerate(self.saved_accounts, start=1):
+            lines.append(f"{index}. {account.get('username', '')}")
+        return "\n".join(lines)
+
+    def _remove_account(self, identifier: str) -> Tuple[bool, str]:
+        identifier = identifier.strip()
+        if not identifier:
+            return False, "请输入要删除的账号名或序号"
+
+        target_index: Optional[int] = None
+        if identifier.isdigit():
+            index = int(identifier)
+            if 1 <= index <= len(self.saved_accounts):
+                target_index = index - 1
+        else:
+            for idx, account in enumerate(self.saved_accounts):
+                if account.get("username") == identifier:
+                    target_index = idx
+                    break
+
+        if target_index is None:
+            return False, f"未找到账号：{identifier}"
+
+        removed = self.saved_accounts.pop(target_index)
+        self._save_accounts()
+
+        if self.global_cred and self.global_cred.get("username") == removed.get("username"):
+            self.global_cred = None
+
+        return True, f"已删除账号：{removed.get('username', '')}"
+
+    def _clear_accounts(self) -> Tuple[bool, str]:
+        if not self.saved_accounts:
+            return True, "当前没有已保存的账号"
+
+        count = len(self.saved_accounts)
+        self.saved_accounts.clear()
+        self._save_accounts()
+        self.global_cred = None
+        return True, f"已清空 {count} 个已保存账号"
+
+    def _get_random_saved_account(self) -> Optional[Dict[str, str]]:
+        if not self.saved_accounts:
+            return None
+        return random.choice(self.saved_accounts)
 
     async def initialize(self):
         logger.info("电费查询插件已加载")
+        logger.info(f"已加载 {len(self.saved_accounts)} 个保存的账号")
 
     async def terminate(self):
         await self.client.aclose()
 
     async def _re_login(self) -> Optional[str]:
-        if not self.global_cred or not self.global_cred.get("username") or not self.global_cred.get("password"):
-            logger.warning("未设置登录凭据，无法重登")
+        account = self._get_random_saved_account()
+        if not account:
+            logger.warning("未保存任何登录凭据，无法重登")
             return None
-        token = await ChargeAPI.login(self.global_cred["username"], self.global_cred["password"], self.client)
+
+        username = account["username"]
+        password = account["password"]
+        logger.info(f"尝试使用随机账号 {username} 自动登录")
+        token = await ChargeAPI.login(username, password, self.client)
         if token:
-            self.global_cred["token"] = token
+            self.global_cred = {"username": username, "password": password, "token": token}
             logger.info("重登成功")
             return token
         else:
-            logger.error("重登失败")
+            logger.error("自动登录失败")
             return None
 
     async def _query_with_retry(self, room_id: str) -> Tuple[Optional[float], str]:
         if not self.global_cred or not self.global_cred.get("token"):
-            return None, "请先使用 `/c login 账号 密码` 登录"
+            new_token = await self._re_login()
+            if not new_token:
+                return None, "请先使用 `/c login 账号 密码` 登录"
+            self.global_cred["token"] = new_token
 
         token = self.global_cred["token"]
         power = await ChargeAPI.query_charge(room_id, token, self.client)
@@ -273,7 +382,7 @@ class ChargePlugin(Star):
         message = event.message_str.strip()
         parts = message.split()
         if len(parts) < 2:
-            yield event.plain_result("用法:\n/c login <账号> <密码>   - 设置默认账号密码\n/c <房间号>        - 查询电费")
+            yield event.plain_result("用法:\n/c login <账号> <密码>        - 保存账号密码并登录\n/c account list              - 查看已保存账号\n/c account remove <账号|序号> - 删除已保存账号\n/c account clear             - 清空所有已保存账号\n/c clear                     - 清空所有已保存账号\n/c <房间号>                  - 查询电费")
             return
 
         sub_cmd = parts[1]
@@ -286,14 +395,46 @@ class ChargePlugin(Star):
             password = parts[3]
             token = await ChargeAPI.login(username, password, self.client)
             if token:
+                self._upsert_account(username, password)
                 self.global_cred = {
                     "username": username,
                     "password": password,
                     "token": token
                 }
-                yield event.plain_result(f"登录成功，账号 {username} 已保存")
+                yield event.plain_result(f"登录成功，账号 {username} 已保存；后续会从已保存账号中随机自动登录")
             else:
                 yield event.plain_result("登录失败，请检查账号密码或网络")
+            return
+
+        if sub_cmd == "account":
+            if len(parts) < 3:
+                yield event.plain_result("用法:\n/c account list\n/c account remove <账号|序号>\n/c account clear")
+                return
+
+            action = parts[2]
+            if action == "list":
+                yield event.plain_result(self._list_accounts())
+                return
+
+            if action == "remove":
+                if len(parts) < 4:
+                    yield event.plain_result("用法: /c account remove <账号|序号>")
+                    return
+                success, msg = self._remove_account(parts[3])
+                yield event.plain_result(msg)
+                return
+
+            if action == "clear":
+                success, msg = self._clear_accounts()
+                yield event.plain_result(msg)
+                return
+
+            yield event.plain_result("用法:\n/c account list\n/c account remove <账号|序号>\n/c account clear")
+            return
+
+        if sub_cmd == "clear":
+            success, msg = self._clear_accounts()
+            yield event.plain_result(msg)
             return
 
         room_id = sub_cmd
