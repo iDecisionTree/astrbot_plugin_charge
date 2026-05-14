@@ -12,6 +12,7 @@ pip install -r requirements.txt
 
 ```text
 /c login <账号> <密码>
+/c help
 /c account list
 /c account remove <账号|序号>
 /c account clear

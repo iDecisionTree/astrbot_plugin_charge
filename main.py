@@ -515,7 +515,7 @@ class ChargePlugin(Star):
 
         recent, previous, consumptions = self._build_recent_series(room_id)
         if not recent:
-            return None, f"房间 {room_id} 已添加，但还没有历史数据，等今晚 22:00 自动记录后再查看分析"
+            return None, f"房间 {room_id} 已添加，但还没有历史数据"
 
         powers = [item["power"] for item in recent]
         latest_power = powers[-1]
@@ -764,7 +764,7 @@ class ChargePlugin(Star):
     async def _handle_analyze_command(self, event: AstrMessageEvent, parts: List[str]):
         if len(parts) < 3:
             yield event.plain_result(
-                "用法:\n/c analyze add <房间号>  - 添加房间并开启每日 22:00 自动采集\n/c analyze <房间号>      - 查看近七天分析图表"
+                "用法:\n/c analyze add <房间号>  - 添加分析房间\n/c analyze <房间号>      - 查看近七天分析图表"
             )
             return
 
@@ -809,6 +809,10 @@ class ChargePlugin(Star):
 
         sub_cmd = parts[1]
 
+        if sub_cmd == "help":
+            yield event.plain_result("用法:\n/c login <账号> <密码>        - 保存账号密码并登录\n/c account list              - 查看已保存账号\n/c account remove <账号|序号> - 删除已保存账号\n/c account clear             - 清空所有已保存账号\n/c analyze add <房间号>      - 添加分析房间\n/c analyze <房间号>          - 查看近七天分析图表\n/c <房间号>                  - 查询电费")
+            return
+
         if sub_cmd == "analyze":
             async for result in self._handle_analyze_command(event, parts):
                 yield result
@@ -828,7 +832,7 @@ class ChargePlugin(Star):
                     "password": password,
                     "token": token
                 }
-                yield event.plain_result(f"登录成功，账号 {username} 已保存；后续会从已保存账号中随机自动登录")
+                yield event.plain_result(f"登录成功，账号 {username} 已保存")
             else:
                 yield event.plain_result("登录失败，请检查账号密码或网络")
             return
