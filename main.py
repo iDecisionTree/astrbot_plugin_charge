@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 import json
 import os
 import random
@@ -561,103 +561,6 @@ class ChargePlugin(Star):
 
         return recent, previous, consumptions
 
-    def _build_interpolated_recent_series(self, room_id: str, limit: int = 7) -> Tuple[List[datetime], List[Optional[float]]]:
-        valid_history = self._get_valid_history(room_id)
-        if not valid_history:
-            return [], []
-
-        known_points: List[Tuple[datetime.date, float]] = []
-        for item in valid_history:
-            try:
-                day = datetime.strptime(str(item.get("date", "")), "%Y-%m-%d").date()
-            except Exception:
-                continue
-            power = _safe_float(item.get("power"))
-            if power is None:
-                continue
-            known_points.append((day, power))
-
-        if not known_points:
-            return [], []
-
-        known_points.sort(key=lambda x: x[0])
-        known_map: Dict[datetime.date, float] = {}
-        for day, power in known_points:
-            known_map[day] = power
-
-        start_day = datetime.now().date() - timedelta(days=limit - 1)
-        target_days = [start_day + timedelta(days=i) for i in range(limit)]
-        known_days = sorted(known_map.keys())
-
-        series_x: List[datetime] = []
-        series_y: List[Optional[float]] = []
-
-        for target_day in target_days:
-            if target_day in known_map:
-                interpolated = known_map[target_day]
-            else:
-                before_day = None
-                after_day = None
-
-                for day in reversed(known_days):
-                    if day < target_day:
-                        before_day = day
-                        break
-
-                for day in known_days:
-                    if day > target_day:
-                        after_day = day
-                        break
-
-                if before_day is None or after_day is None:
-                    interpolated = None
-                else:
-                    before_power = known_map[before_day]
-                    after_power = known_map[after_day]
-                    total_days = (after_day - before_day).days
-                    passed_days = (target_day - before_day).days
-                    interpolated = before_power + (after_power - before_power) * (passed_days / total_days)
-
-            series_x.append(datetime.combine(target_day, time(hour=22)))
-            series_y.append(interpolated)
-
-        return series_x, series_y
-        if not valid_history:
-            return [], None, []
-
-        cutoff_date = (datetime.now().date() - timedelta(days=limit - 1))
-
-        def _parse_history_date(item: Dict[str, Any]) -> Optional[datetime.date]:
-            try:
-                return datetime.strptime(str(item.get("date", "")), "%Y-%m-%d").date()
-            except Exception:
-                return None
-
-        recent = [item for item in valid_history if (_parse_history_date(item) is not None and _parse_history_date(item) >= cutoff_date)]
-        previous = None
-        if recent:
-            first_recent_date = _parse_history_date(recent[0])
-            for candidate in reversed(valid_history):
-                candidate_date = _parse_history_date(candidate)
-                if candidate_date is not None and first_recent_date is not None and candidate_date < first_recent_date:
-                    previous = candidate
-                    break
-
-        consumptions: List[Optional[float]] = []
-        for idx, item in enumerate(recent):
-            current_power = _safe_float(item.get("power"))
-            if idx == 0:
-                if previous is None:
-                    consumptions.append(None)
-                else:
-                    previous_power = _safe_float(previous.get("power"))
-                    consumptions.append(previous_power - current_power if previous_power is not None and current_power is not None else None)
-            else:
-                prev_power = _safe_float(recent[idx - 1].get("power"))
-                consumptions.append(prev_power - current_power if prev_power is not None and current_power is not None else None)
-
-        return recent, previous, consumptions
-
     def _build_analysis_summary(self, room_id: str) -> Tuple[Optional[str], Optional[str]]:
         if not self._is_room_tracked(room_id):
             return None, f"该房间还没有被添加，请先使用 `/c analyze add {room_id}`"
@@ -718,26 +621,14 @@ class ChargePlugin(Star):
         except Exception as e:
             return None, f"绘图依赖不可用：{e}"
 
-        chart_x, powers = self._build_interpolated_recent_series(room_id)
-        if not chart_x:
-            return None, f"房间 {room_id} 暂无可用于绘图的历史数据"
-        if not any(value is not None for value in powers):
-            return None, f"房间 {room_id} 暂无可用于绘图的历史数据"
-
-        consumption_x = chart_x
-        consumption_y: List[Optional[float]] = [None]
-        for idx in range(1, len(powers)):
-            current_power = powers[idx]
-            previous_power = powers[idx - 1]
-            if current_power is None or previous_power is None:
-                consumption_y.append(None)
-            else:
-                consumption_y.append(previous_power - current_power)
+        dates = [item["date"] for item in recent]
+        powers = [item["power"] for item in recent]
+        consumption_x = dates
+        consumption_y = consumptions
 
         chinese_font_path = _find_chinese_font_path()
 
         try:
-            import matplotlib.dates as mdates
             plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"]
             plt.rcParams["axes.unicode_minus"] = False
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 9), constrained_layout=True)
@@ -753,12 +644,10 @@ class ChargePlugin(Star):
                 except Exception:
                     pass
 
-            ax1.plot(chart_x, powers, marker="o", linewidth=2, color="#2F6FED")
+            ax1.plot(dates, powers, marker="o", linewidth=2, color="#2F6FED")
             ax1.set_title(f"房间 {room_id} 近七天剩余电量", fontproperties=font_properties)
             ax1.set_ylabel("剩余电量（度）", fontproperties=font_properties)
             ax1.grid(True, linestyle="--", alpha=0.35)
-            ax1.xaxis.set_major_locator(mdates.DayLocator(interval=1))
-            ax1.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
 
             if any(value is not None for value in consumption_y):
                 ax2.plot(consumption_x, consumption_y, marker="o", linewidth=2, color="#E67E22")
@@ -766,8 +655,6 @@ class ChargePlugin(Star):
                 ax2.set_title("近七天每天消耗电量", fontproperties=font_properties)
                 ax2.set_ylabel("消耗电量（度）", fontproperties=font_properties)
                 ax2.grid(True, linestyle="--", alpha=0.35)
-                ax2.xaxis.set_major_locator(mdates.DayLocator(interval=1))
-                ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
             else:
                 ax2.text(0.5, 0.5, "暂无足够数据绘制消耗曲线", ha="center", va="center", fontsize=13, fontproperties=font_properties)
                 ax2.set_axis_off()
@@ -780,7 +667,6 @@ class ChargePlugin(Star):
                             label.set_fontproperties(font_properties)
 
             fig.suptitle(f"房间 {room_id} 电量分析", fontsize=16, fontproperties=font_properties)
-            fig.autofmt_xdate()
             chart_path = self.plugin_data_dir / f"analysis_{room_id}.png"
             fig.savefig(chart_path, dpi=200)
             plt.close(fig)
