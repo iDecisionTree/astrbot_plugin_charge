@@ -525,6 +525,41 @@ class ChargePlugin(Star):
 
     def _build_recent_series(self, room_id: str, limit: int = 7) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]], List[Optional[float]]]:
         valid_history = self._get_valid_history(room_id)
+        if not valid_history:
+            return [], None, []
+
+        cutoff_date = (datetime.now().date() - timedelta(days=limit - 1))
+
+        def _parse_history_date(item: Dict[str, Any]) -> Optional[datetime.date]:
+            try:
+                return datetime.strptime(str(item.get("date", "")), "%Y-%m-%d").date()
+            except Exception:
+                return None
+
+        recent = [item for item in valid_history if (_parse_history_date(item) is not None and _parse_history_date(item) >= cutoff_date)]
+        previous = None
+        if recent:
+            first_recent_date = _parse_history_date(recent[0])
+            for candidate in reversed(valid_history):
+                candidate_date = _parse_history_date(candidate)
+                if candidate_date is not None and first_recent_date is not None and candidate_date < first_recent_date:
+                    previous = candidate
+                    break
+
+        consumptions: List[Optional[float]] = []
+        for idx, item in enumerate(recent):
+            current_power = _safe_float(item.get("power"))
+            if idx == 0:
+                if previous is None:
+                    consumptions.append(None)
+                else:
+                    previous_power = _safe_float(previous.get("power"))
+                    consumptions.append(previous_power - current_power if previous_power is not None and current_power is not None else None)
+            else:
+                prev_power = _safe_float(recent[idx - 1].get("power"))
+                consumptions.append(prev_power - current_power if prev_power is not None and current_power is not None else None)
+
+        return recent, previous, consumptions
 
     def _build_interpolated_recent_series(self, room_id: str, limit: int = 7) -> Tuple[List[datetime], List[Optional[float]]]:
         valid_history = self._get_valid_history(room_id)
@@ -685,6 +720,8 @@ class ChargePlugin(Star):
 
         chart_x, powers = self._build_interpolated_recent_series(room_id)
         if not chart_x:
+            return None, f"房间 {room_id} 暂无可用于绘图的历史数据"
+        if not any(value is not None for value in powers):
             return None, f"房间 {room_id} 暂无可用于绘图的历史数据"
 
         consumption_x = chart_x
