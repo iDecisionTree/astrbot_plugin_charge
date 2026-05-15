@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 import json
 import os
 import random
@@ -623,12 +623,15 @@ class ChargePlugin(Star):
 
         dates = [item["date"] for item in recent]
         powers = [item["power"] for item in recent]
-        consumption_x = dates
+        chart_dates = [datetime.strptime(date_str, "%Y-%m-%d") for date_str in dates]
+        chart_x = [datetime.combine(dt.date(), time(hour=22)) for dt in chart_dates]
+        consumption_x = chart_x
         consumption_y = consumptions
 
         chinese_font_path = _find_chinese_font_path()
 
         try:
+            import matplotlib.dates as mdates
             plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"]
             plt.rcParams["axes.unicode_minus"] = False
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 9), constrained_layout=True)
@@ -644,10 +647,12 @@ class ChargePlugin(Star):
                 except Exception:
                     pass
 
-            ax1.plot(dates, powers, marker="o", linewidth=2, color="#2F6FED")
+            ax1.plot(chart_x, powers, marker="o", linewidth=2, color="#2F6FED")
             ax1.set_title(f"房间 {room_id} 近七天剩余电量", fontproperties=font_properties)
             ax1.set_ylabel("剩余电量（度）", fontproperties=font_properties)
             ax1.grid(True, linestyle="--", alpha=0.35)
+            ax1.xaxis.set_major_locator(mdates.DayLocator())
+            ax1.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
 
             if any(value is not None for value in consumption_y):
                 ax2.plot(consumption_x, consumption_y, marker="o", linewidth=2, color="#E67E22")
@@ -655,6 +660,8 @@ class ChargePlugin(Star):
                 ax2.set_title("近七天每天消耗电量", fontproperties=font_properties)
                 ax2.set_ylabel("消耗电量（度）", fontproperties=font_properties)
                 ax2.grid(True, linestyle="--", alpha=0.35)
+                ax2.xaxis.set_major_locator(mdates.DayLocator())
+                ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
             else:
                 ax2.text(0.5, 0.5, "暂无足够数据绘制消耗曲线", ha="center", va="center", fontsize=13, fontproperties=font_properties)
                 ax2.set_axis_off()
@@ -667,6 +674,7 @@ class ChargePlugin(Star):
                             label.set_fontproperties(font_properties)
 
             fig.suptitle(f"房间 {room_id} 电量分析", fontsize=16, fontproperties=font_properties)
+            fig.autofmt_xdate()
             chart_path = self.plugin_data_dir / f"analysis_{room_id}.png"
             fig.savefig(chart_path, dpi=200)
             plt.close(fig)
